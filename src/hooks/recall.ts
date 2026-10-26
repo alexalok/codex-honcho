@@ -1,6 +1,7 @@
 import { loadConfig, sessionName, memoryKey, honchoSessionUrl } from "../config.ts";
 import { createSession, renderContext } from "../memory.ts";
 import { readContext, writeContext, isStale, markInjected } from "../cache.ts";
+import { recordSessionIdentity } from "../session-identity.ts";
 
 interface RecallInput {
   cwd?: string;
@@ -25,6 +26,7 @@ export async function recall(input: RecallInput): Promise<string> {
   const cwd = input.cwd || process.cwd();
   const name = sessionName(config, cwd, input.session_id);
   const key = memoryKey(config, cwd, input.session_id);
+  if (config.saveMessages) recordSessionIdentity(config, cwd, input.session_id);
 
   // Create + materialize the session once, here at SessionStart.
   const { userPeer } = await createSession(config, name);

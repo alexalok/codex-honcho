@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
-import { loadConfig, sessionName, memoryKey } from "../config.ts";
+import { loadConfig, sessionName, memoryKey, type Config } from "../config.ts";
 import { getSession } from "../memory.ts";
 import { readQueue, sentCount, setSentCount, queueDir, safe, type QueueEntry } from "../queue.ts";
+import { hasDelegationMarker, splitDelegations } from "../transcript/delegation.ts";
+import { attributeDelegation, identityScope, unknownDelegationPeer } from "../session-identity.ts";
 
 interface FlushInput {
   cwd?: string;
@@ -59,19 +61,49 @@ export function lockPath(key: string): string {
   return join(queueDir(), `${safe(key)}.lock`);
 }
 
-function messagesForEntry(
+async function messagesForEntry(
   entry: QueueEntry,
-  userPeer: SessionHandles["userPeer"],
-  aiPeer: SessionHandles["aiPeer"],
-): PeerMessage[] {
-  const peer = entry.role === "user" ? userPeer : aiPeer;
-  const body = entry.role === "tool" ? `[tool] ${entry.text}` : entry.text;
-  return chunkText(body).map((piece) =>
-    peer.message(piece, {
-      createdAt: entry.at,
-      ...(entry.role === "tool" ? { metadata: { type: "tool" } } : {}),
-    }),
-  );
+  handles: SessionHandles,
+  config: Config,
+  peers: Map<string, SessionHandles["aiPeer"]>,
+): Promise<PeerMessage[]> {
+  // Pending queues from older versions can still contain user-role wrappers.
+  // Normalize them on replay without rewriting the durable queue/sent marker.
+  const parts: QueueEntry[] = entry.role === "user" && hasDelegationMarker(entry.text)
+    ? splitDelegations(entry.text, "user-message").map((t) => ({ ...attributeDelegation(t, config), at: entry.at }))
+    : [entry];
+  const messages: PeerMessage[] = [];
+  for (const part of parts) {
+    let peer = part.role === "user" ? handles.userPeer : handles.aiPeer;
+    let metadata: Record<string, unknown> | undefined;
+    if (part.role === "delegation") {
+      const provenance = part.delegation;
+      const sender = provenance?.wrapper === "valid" && provenance.sourceThreadId &&
+        provenance.sender?.scope === identityScope(config) && provenance.sender.peer !== config.peerName
+        ? provenance.sender : undefined;
+      const id = sender?.peer || unknownDelegationPeer(config);
+      if (!peers.has(id)) peers.set(id, await handles.delegationPeer(id, !sender));
+      peer = peers.get(id)!;
+      metadata = {
+        type: "delegation", origin: "agent", provenance_scope: "routing",
+        transport: provenance?.transport ?? "unknown",
+        wrapper: provenance?.wrapper ?? "malformed",
+        source_thread_id: provenance?.sourceThreadId ?? null,
+        sender_resolution: sender ? "local-session" : "unknown",
+        source_peer: sender?.peer ?? null,
+        source_session: sender?.session ?? null,
+      };
+    } else if (part.role === "tool") {
+      metadata = { type: "tool" };
+    }
+    const body = part.role === "tool" ? `[tool] ${part.text}` : part.text;
+    messages.push(...chunkText(body).map((piece) => peer.message(piece, {
+      createdAt: part.at, ...(metadata ? { metadata } : {}),
+    })));
+  }
+  // Keep the existing per-entry ceiling, including entries split into mixed
+  // human/delegation pieces, so sent markers still move at entry boundaries.
+  return messages.slice(0, BATCH_LIMIT);
 }
 
 // Single-flusher lock: skip if another flush holds it (dead owners are taken
@@ -122,7 +154,9 @@ export async function flush(input: FlushInput): Promise<string> {
     const start = sentCount(key);
     if (all.length - start <= 0) return "";
 
-    const { session, userPeer, aiPeer } = await getSession(config, name);
+    const handles = await getSession(config, name);
+    const { session } = handles;
+    const peers = new Map<string, SessionHandles["aiPeer"]>();
     let batch: PeerMessage[] = [];
 
     // Drain pending entries in order, flushing only at entry boundaries so the
@@ -131,7 +165,7 @@ export async function flush(input: FlushInput): Promise<string> {
     // batch is flushed right before an entry would push it past BATCH_LIMIT, and
     // once more at the end, so no single call exceeds Honcho's per-request limit.
     for (let i = start; i < all.length; i++) {
-      const messages = messagesForEntry(all[i], userPeer, aiPeer);
+      const messages = await messagesForEntry(all[i], handles, config, peers);
       if (batch.length > 0 && batch.length + messages.length > BATCH_LIMIT) {
         await session.addMessages(batch);
         setSentCount(key, i);

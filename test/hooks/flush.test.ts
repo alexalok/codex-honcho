@@ -4,16 +4,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { enqueue, sentCount, pendingCount, setSentCount } from "../../src/queue.ts";
 import { lockPath } from "../../src/hooks/flush.ts";
+import { capture } from "../../src/hooks/writeback.ts";
+import { loadConfig } from "../../src/config.ts";
+import { identityScope, recordSessionIdentity } from "../../src/session-identity.ts";
+import { SOURCE, UNKNOWN, AT, modern, message, wrapper } from "../fixtures/delegation.ts";
 
 // Captured by the mocked memory boundary so flush never hits the network.
 interface SentMsg {
-  peer: "user" | "ai";
+  peer: string;
   text: string;
-  opts?: { createdAt?: string; metadata?: { type?: string } };
+  opts?: { createdAt?: string; metadata?: Record<string, unknown> };
 }
 let batches: SentMsg[][] = [];
 let addCalls = 0;
 let failOnCalls = new Set<number>();
+let delegatedPeers: Array<{ id: string; unknown: boolean }> = [];
 
 mock.module("../../src/memory.ts", () => ({
   getSession: async () => ({
@@ -26,6 +31,10 @@ mock.module("../../src/memory.ts", () => ({
     },
     userPeer: { message: (text: string, opts?: SentMsg["opts"]) => ({ peer: "user", text, opts }) },
     aiPeer: { message: (text: string, opts?: SentMsg["opts"]) => ({ peer: "ai", text, opts }) },
+    delegationPeer: async (id: string, unknown: boolean) => {
+      delegatedPeers.push({ id, unknown });
+      return { message: (text: string, opts?: SentMsg["opts"]) => ({ peer: id, text, opts }) };
+    },
   }),
 }));
 
@@ -50,6 +59,7 @@ beforeEach(() => {
   batches = [];
   addCalls = 0;
   failOnCalls = new Set();
+  delegatedPeers = [];
 });
 
 afterEach(() => {
@@ -230,4 +240,139 @@ test("does not upload when saveMessages is disabled", async () => {
   await runFlush();
   expect(addCalls).toBe(0);
   expect(sentCount("s1")).toBe(0);
+});
+
+function delegationConfig() {
+  writeFileSync(join(dir, "config.json"), JSON.stringify({
+    apiKey: "fixture-only", peerName: "alex", aiPeer: "codex-overseer",
+    endpoint: { baseUrl: "http://127.0.0.1:1/v3" },
+  }));
+  return loadConfig()!;
+}
+
+test("capture through flush preserves both transports, mapped and unknown sender, and normal attribution", async () => {
+  const config = delegationConfig();
+  recordSessionIdentity({ ...config, aiPeer: "steve", sessions: { "/fixture/source": "steve-source" } }, "/fixture/source", SOURCE);
+  const path = join(dir, "synthetic.jsonl");
+  writeFileSync(path, [
+    message("human instruction"), modern(wrapper("known modern")), message("answer", "assistant"),
+    message(wrapper("known compatibility")), modern(wrapper("unknown modern", UNKNOWN)),
+    message(wrapper("unknown compatibility", UNKNOWN)),
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  expect(capture("s1", path, config)).toBe(6);
+  expect(capture("s1", path, config)).toBe(0);
+
+  await runFlush();
+  const msgs = batches.flat();
+  expect(msgs.map((m) => m.peer)).toEqual([
+    "user", "steve", "ai", "steve", "codex-delegation-unknown", "codex-delegation-unknown",
+  ]);
+  expect(msgs[1].opts).toEqual({ createdAt: AT, metadata: {
+    type: "delegation", origin: "agent", provenance_scope: "routing", transport: "tool-output", wrapper: "valid",
+    source_thread_id: SOURCE, sender_resolution: "local-session", source_peer: "steve", source_session: "steve-source",
+  } });
+  expect(msgs[3].opts?.metadata?.transport).toBe("user-message");
+  expect(msgs[4].opts?.metadata).toMatchObject({ source_thread_id: UNKNOWN, sender_resolution: "unknown", source_peer: null });
+  expect(msgs[0].opts?.metadata).toBeUndefined();
+  expect(msgs[2].opts?.metadata).toBeUndefined();
+  expect(delegatedPeers).toEqual([{ id: "steve", unknown: false }, { id: "codex-delegation-unknown", unknown: true }]);
+  await runFlush();
+  expect(addCalls).toBe(1);
+  expect(sentCount("s1")).toBe(6);
+});
+
+test("replays an old pending user wrapper with agent attribution without resending the sent prefix", async () => {
+  const config = delegationConfig();
+  recordSessionIdentity({ ...config, aiPeer: "steve" }, "/fixture/source", SOURCE);
+  enqueue("s1", [
+    { role: "user", text: "already sent" },
+    { role: "user", text: `human prefix\n${wrapper("delegated task")}\nhuman suffix`, at: AT },
+    { role: "user", text: wrapper("unknown task", UNKNOWN) },
+    { role: "assistant", text: "unchanged answer" },
+  ]);
+  setSentCount("s1", 1);
+  await runFlush();
+  expect(batches.flat().map((m) => [m.peer, m.text])).toEqual([
+    ["user", "human prefix"], ["steve", "delegated task"], ["user", "human suffix"],
+    ["codex-delegation-unknown", "unknown task"], ["ai", "unchanged answer"],
+  ]);
+  expect(sentCount("s1")).toBe(4);
+  expect(pendingCount("s1")).toBe(0);
+});
+
+test("malformed legacy wrappers never upload as the human or a guessed sender", async () => {
+  delegationConfig();
+  const malformed = "<codex_delegation><source_thread_id>alex</source_thread_id><input>unfinished";
+  enqueue("s1", [{ role: "user", text: malformed }]);
+  await runFlush();
+  expect(batches.flat()[0]).toMatchObject({
+    peer: "codex-delegation-unknown", text: malformed,
+    opts: { metadata: { type: "delegation", wrapper: "malformed", source_thread_id: null, sender_resolution: "unknown" } },
+  });
+});
+
+test("all chunks of a delegated task preserve provenance and retry as one queue entry", async () => {
+  delegationConfig();
+  enqueue("s1", [{
+    role: "delegation", text: "x".repeat(60000), at: AT,
+    delegation: { transport: "tool-output", wrapper: "valid", sourceThreadId: UNKNOWN },
+  }]);
+  failOnCalls = new Set([1]);
+  await expect(runFlush()).rejects.toThrow();
+  expect(sentCount("s1")).toBe(0);
+  failOnCalls.clear();
+  await runFlush();
+  const msgs = batches.flat();
+  expect(msgs).toHaveLength(3);
+  expect(msgs.every((m) => m.peer === "codex-delegation-unknown" && m.text.length <= 24000)).toBe(true);
+  expect(msgs.map((m) => m.text.replace(/^\[part \d+\/\d+\] /, "")).join("")).toBe("x".repeat(60000));
+  expect(msgs.every((m) => m.opts?.createdAt === AT && m.opts.metadata?.source_thread_id === UNKNOWN)).toBe(true);
+  expect(sentCount("s1")).toBe(1);
+  await runFlush();
+  expect(addCalls).toBe(2);
+});
+
+test("retry retains the identity captured earlier even after recipient configuration changes", async () => {
+  const config = delegationConfig();
+  recordSessionIdentity({ ...config, aiPeer: "steve" }, "/fixture/source", SOURCE);
+  const path = join(dir, "synthetic.jsonl");
+  writeFileSync(path, JSON.stringify(modern(wrapper("retry task"))));
+  capture("s1", path, config);
+  failOnCalls = new Set([1]);
+  await expect(runFlush()).rejects.toThrow();
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ ...config, aiPeer: "new-recipient" }));
+  failOnCalls.clear();
+  await runFlush();
+  expect(batches.flat()[0]).toMatchObject({ peer: "steve", text: "retry task", opts: { metadata: { source_peer: "steve" } } });
+});
+
+test("a delegated record cannot explicitly name the human as its sender", async () => {
+  const config = delegationConfig();
+  enqueue("s1", [{
+    role: "delegation", text: "task",
+    delegation: { transport: "user-message", wrapper: "valid", sourceThreadId: SOURCE, sender: { peer: "alex", session: "invalid", scope: identityScope(config) } },
+  }]);
+  await runFlush();
+  expect(batches.flat()[0]).toMatchObject({ peer: "codex-delegation-unknown", opts: { metadata: { source_peer: null } } });
+});
+
+test("queued sender mappings cannot name a peer in a different endpoint or workspace", async () => {
+  const config = delegationConfig();
+  recordSessionIdentity({ ...config, aiPeer: "steve" }, "/fixture/source", SOURCE);
+  const path = join(dir, "synthetic.jsonl");
+  writeFileSync(path, JSON.stringify(modern(wrapper("scoped task"))));
+  capture("s1", path, config);
+  for (const changed of [
+    { ...config, workspace: "different-workspace" },
+    { ...config, endpoint: { baseUrl: "http://127.0.0.1:2/v3" } },
+  ]) {
+    writeFileSync(join(dir, "config.json"), JSON.stringify(changed));
+    setSentCount("s1", 0); // synthetic replay against another mocked destination
+    batches = [];
+    await runFlush();
+    expect(batches.flat()[0]).toMatchObject({
+      peer: "codex-delegation-unknown", text: "scoped task",
+      opts: { metadata: { source_thread_id: SOURCE, sender_resolution: "unknown", source_peer: null } },
+    });
+  }
 });

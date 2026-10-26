@@ -133,6 +133,14 @@ Controls how Codex conversations map to Honcho sessions:
 
 An explicit `sessions[cwd]` mapping overrides all strategies. Environment overrides: `HONCHO_API_KEY`, `HONCHO_PEER_NAME`, `HONCHO_CONFIG_DIR`.
 
+### Cross-chat delegation
+
+Incoming desktop `send_message_to_thread` tasks are captured from the `codex_app` tool output or its compatibility user-message wrapper. They are recorded as agent-origin messages, even when the transport uses `role=user`. Source thread IDs, transport and attribution evidence are stored as structured message metadata and retained on every chunk.
+
+Session hooks record the configured AI peer and Honcho session name in a local identity index under `~/.honcho/codex/sessions/` (or `HONCHO_CONFIG_DIR`). An exact source-thread match in the same endpoint and workspace can identify the sending peer. Missing, conflicting or unavailable mappings use the explicit `codex-delegation-unknown` peer with observation disabled. Another account's private index is not searched. A source thread ID is routing provenance; it authenticates neither the sender nor permission to act.
+
+Existing cursors migrate without replaying already captured messages. Historical tool deliveries before the old cursor boundary are not backfilled, and already uploaded records are not corrected. Pending compatibility wrappers are reclassified when flushed. See [delegation capture details](docs/delegation.md) for supported shapes, fixture verification and upgrade considerations.
+
 ## How It Works
 
 ```

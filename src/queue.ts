@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import type { Turn } from "./transcript/codex.ts";
 
 // A durable, human-readable outbox. Capture hooks append here instantly (local,
 // no network) so everything recorded is visible live (`tail -f`); a background
@@ -11,10 +12,8 @@ export function queueDir(): string {
   return join(process.env.HONCHO_CONFIG_DIR || join(homedir(), ".honcho"), "codex", "queue");
 }
 
-export interface QueueEntry {
-  role: "user" | "assistant" | "tool";
-  text: string;
-  at?: string;
+export interface QueueEntry extends Omit<Turn, "role"> {
+  role: Turn["role"] | "tool";
 }
 
 // Turn a memory key (which can contain "/", ":", ".", spaces from repo paths,
