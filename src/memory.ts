@@ -8,7 +8,9 @@ async function sessionAndPeers(config: Config, name: string) {
     honcho.peer(config.peerName),
     honcho.peer(config.aiPeer),
   ]);
-  return { session, userPeer, aiPeer };
+  const delegationPeer = (id: string, unknown: boolean) => honcho.peer(id,
+    unknown ? { configuration: { observeMe: false } } : undefined);
+  return { session, userPeer, aiPeer, delegationPeer };
 }
 
 // Deliberate session creation — run once at SessionStart. addPeers materializes
