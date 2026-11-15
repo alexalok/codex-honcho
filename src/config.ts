@@ -50,8 +50,8 @@ export interface Config {
   enabled: boolean;
   saveMessages: boolean;
   reasoningLevel: string;
-  // Inject prompt-relevant context on every turn. Off by default — lean
-  // session-start context plus the MCP tools cover depth on demand.
+  // Retrieve task-relevant conclusions after each non-trivial user prompt.
+  // Disabled by default; explicit true enables automatic task recall.
   injectPerPrompt: boolean;
   // How Honcho session names are derived (default per-directory).
   sessionStrategy: SessionStrategy;

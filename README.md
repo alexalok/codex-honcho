@@ -114,7 +114,7 @@ All settings live in `~/.honcho/config.json` (shared with other Honcho integrati
     "codex": {
       "workspace": "codex",          // Honcho workspace for Codex memory
       "sessionStrategy": "per-directory",
-      "injectPerPrompt": false,      // re-inject context every turn (off by default)
+      "injectPerPrompt": false,      // task-relevant recall after prompts (opt-in)
       "saveMessages": true           // false = read memory but never write
     }
   }
@@ -150,8 +150,8 @@ Existing cursors migrate without replaying already captured messages. Historical
 │  SessionStart  │  UserPrompt     │  PostToolUse   │  Stop / PreCompact │
 │  ───────────   │  ───────────    │  ────────────  │  ───────────────── │
 │  recall:       │  prompt:        │  observe:      │  writeback:        │
-│  load context  │  (optional)     │  note tool     │  capture the new   │
-│  from Honcho   │  per-turn ctx   │  calls         │  transcript tail   │
+│  tools + link  │  task search    │  note tool     │  capture the new   │
+│  no profile    │  bounded notes  │  calls         │  transcript tail   │
 └──────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -160,15 +160,17 @@ Existing cursors migrate without replaying already captured messages. Historical
                               ▼  flush (inline, end of turn)
                          Honcho API  →  Persistent Memory
                               │
-                              ▼  retrieved as context at the next session start
+                              ▼  retrieved after the next non-trivial user prompt
 ```
 
 The plugin hooks into Codex's lifecycle events:
 
-- **SessionStart** (`recall`) — creates/materializes the session and injects a lean `<honcho-memory>` context block
-- **UserPromptSubmit** (`prompt`) — optional per-turn context injection (off by default; the MCP tools cover depth)
+- **SessionStart** (`recall`) — creates/materializes the session and exposes a compact MCP tool hint plus session link. It never retrieves or injects a peer profile, peer card, or generic representation.
+- **UserPromptSubmit** (`prompt`) — searches self-conclusions using the actual user prompt (disabled by default; `injectPerPrompt: true` opts in). It skips empty, trivial, and recognized generated prompts; requests at most 6 matches within cosine distance 0.5; bounds the query to 2,000 characters and the rendered block to 2,400 characters; and deduplicates normalized facts and consecutive identical blocks. Oversized individual facts are skipped. No matches or API failures produce no memory block, with no generic fallback. Peer identity remains necessary for API/storage use but is not rendered as a profile.
 - **PostToolUse** (`observe`) — appends a one-line note for significant tool calls to the local queue
 - **Stop / PreCompact** (`writeback`) — captures the new transcript tail, then flushes the queue to Honcho
+
+Task recall uses a separate digest cache, never the old profile cache. Session start/resume/clear/compact resets its duplicate suppression so relevant notes can return after a context reset. Recall requests have a 4-second timeout per SDK request and no retries; MCP tools remain available for deeper recall. Semantic relevance depends on Honcho’s search results; this does not purge old contaminated server memories.
 
 Capture is **local-first**: hooks only ever append to a plain JSONL queue, so they're instant and never touch the network. The flush is lock-guarded and advances a per-chunk sent marker, so a failed or partial upload simply stays queued and retries on the next turn. Inspect the local queue any time with `tail -f ~/.honcho/codex/queue/*.jsonl`, and run `codex-honcho status` to see the pending depth plus a deep link to your session in the Honcho GUI to confirm what landed server-side.
 
