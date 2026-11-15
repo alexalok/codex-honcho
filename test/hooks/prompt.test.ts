@@ -52,11 +52,35 @@ test("opted-in prompt retrieval sends task query, threshold and peer identity, n
     filters: { observer_id: "testuser", observed_id: "testuser" } });
   expect(requests.some(r => /context|representation/.test(r.path))).toBe(false);
 });
-test("default, explicit opt-out and disabled integration make no requests", async () => {
-  writeConfig({ injectPerPrompt: undefined }); expect(await prompt(input)).toBe("");
-  writeConfig({ injectPerPrompt: false }); expect(await prompt(input)).toBe("");
+test("default and explicit false recall initially but skip later prompts", async () => {
+  for (const injectPerPrompt of [undefined, false]) {
+    writeConfig({ injectPerPrompt });
+    const turn = { ...input, session_id: String(injectPerPrompt) };
+    expect(await prompt(turn)).toContain("rotating tokens");
+    const count = requests.length;
+    expect(await prompt({ ...turn, prompt: "Which DB does this project use?" })).toBe("");
+    expect(requests).toHaveLength(count);
+  }
+});
+test("disabled integration makes no requests", async () => {
   writeConfig({ enabled: false }); expect(await prompt(input)).toBe("");
   expect(requests).toHaveLength(0);
+});
+test("skipped prompts do not consume initial recall", async () => {
+  writeConfig({ injectPerPrompt: false });
+  expect(await prompt({ ...input, prompt: "ok" })).toBe("");
+  expect(await prompt({ ...input, prompt: "<environment_context>generated</environment_context>" })).toBe("");
+  expect(requests).toHaveLength(0);
+  expect(await prompt(input)).toContain("rotating tokens");
+});
+test("empty successful search completes initial recall, failures allow retry", async () => {
+  writeConfig({ injectPerPrompt: false });
+  fail = true; expect(await prompt(input)).toBe("");
+  fail = false; facts = []; expect(await prompt(input)).toBe("");
+  const count = requests.length;
+  facts = ["A new fact"];
+  expect(await prompt(input)).toBe("");
+  expect(requests).toHaveLength(count);
 });
 test("trivial and generated prompts make no requests; human AGENTS questions survive", async () => {
   for (const text of ["", "ok!", "continue", "да", "<environment_context>stuff</environment_context>",
@@ -88,7 +112,8 @@ test("API failures return empty without fallback or poisoning later retry", asyn
   fail = true; expect(await prompt(input)).toBe("");
   fail = false; expect(await prompt(input)).toContain("rotating tokens");
 });
-test("SessionStart only gives tool hint/link and resets dedup after context reset", async () => {
+test("SessionStart only gives tool hint/link and rearms initial recall with repeat disabled", async () => {
+  writeConfig({ injectPerPrompt: false });
   await prompt(input);
   requests = [];
   const out = await recall(input);
