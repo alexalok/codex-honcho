@@ -3,7 +3,7 @@ import { writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { readRollout, readRolloutCwd } from "../../src/transcript/codex.ts";
+import { readRollout, readRolloutCwd, readRolloutItems } from "../../src/transcript/codex.ts";
 import { AT, SOURCE, modern, message, wrapper } from "../fixtures/delegation.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/codex-rollout.jsonl", import.meta.url));
@@ -208,4 +208,91 @@ test("filters injected context and developer messages before considering delegat
     message("ordinary human request"),
   ]));
   expect(turns.map((t) => [t.role, t.text])).toEqual([["user", "ordinary human request"]]);
+});
+
+const agents = (heading = "# AGENTS.md instructions", body = "Use pnpm.") =>
+  `${heading}\n\n<INSTRUCTIONS>\n${body}\n</INSTRUCTIONS>`;
+const environment = "<environment_context>\n<cwd>/fixture</cwd>\n</environment_context>";
+
+test("filters desktop AGENTS provenance and companion environment, retaining counted slots", () => {
+  const event = message([
+    { type: "input_text", text: agents() },
+    { type: "input_text", text: environment },
+  ]);
+  Object.assign(event.payload, { internal_chat_message_metadata_passthrough: {
+    content_item_kinds: ["agents_md.instructions", "environments.environment_context"],
+    content_item_metadata: [{ provenance: { type: "agents_md" } }, { provenance: { type: "harness", hook: false } }],
+  } });
+  const path = writeRollout([event, message("Real request."), message("Answer.", "assistant")]);
+  expect(readRolloutItems(path)[0]).toEqual({ legacy: true, turns: [] });
+  expect(readRollout(path).map((t) => t.text)).toEqual(["Real request.", "Answer."]);
+});
+
+test("uses each supported provenance field independently and preserves adjacent authored blocks", () => {
+  for (const metadata of [
+    { content_item_kinds: [null, "agents_md.instructions"] },
+    { content_item_metadata: [null, { provenance: { type: "agents_md" } }] },
+  ]) {
+    const event = message([
+      { type: "input_image", image_url: "fixture" },
+      { type: "input_text", text: "Injected instructions without the historical envelope." },
+      { type: "input_text", text: environment },
+      { type: "input_text", text: "My own instruction: use pnpm." },
+    ]);
+    Object.assign(event.payload, { internal_chat_message_metadata_passthrough: metadata });
+    expect(readRollout(writeRollout([event])).map((t) => t.text)).toEqual(["My own instruction: use pnpm."]);
+  }
+});
+
+test("recognizes complete older AGENTS envelopes, paths, nested instructions and CRLF", () => {
+  const envelopes = [
+    agents(), agents("# AGENTS.md instructions for /fixture/project with spaces"),
+    agents("# AGENTS.md instructions for C:\\repo"),
+    agents(undefined, "Nested example:\n<INSTRUCTIONS>inner</INSTRUCTIONS>"),
+    `${agents()}\n${environment}`,
+    agents().replaceAll("\n", "\r\n"),
+  ];
+  const path = writeRollout(envelopes.map((text) => message(text)));
+  expect(readRollout(path)).toEqual([]);
+  expect(readRolloutItems(path)).toEqual(envelopes.map(() => ({ legacy: true, turns: [] })));
+});
+
+test("preserves genuine rules, AGENTS discussion, quotations, incomplete envelopes and suffix requests", () => {
+  const authored = [
+    "Always use pnpm. Never deploy without permission.",
+    "# AGENTS.md instructions\nPlease update these rules.",
+    "# AGENTS.md instructions\n<INSTRUCTIONS>unfinished",
+    `Explain this:\n${agents()}`,
+    `\`\`\`md\n${agents()}\n\`\`\``,
+    `> ${agents()}`,
+    `${agents()}\nPlease review these instructions.`,
+    "<INSTRUCTIONS>My genuine rules.</INSTRUCTIONS>",
+  ];
+  expect(readRollout(writeRollout(authored.map((text) => message(text)))).map((t) => t.text)).toEqual(authored);
+  expect(readRollout(writeRollout([message(agents(), "assistant")]))[0].text).toBe(agents());
+});
+
+test("fallback removes only injected blocks and tolerates malformed provenance", () => {
+  const event = message([
+    { type: "input_text", text: "My first instruction." },
+    { type: "input_text", text: agents() },
+    { type: "input_text", text: agents("# AGENTS.md instructions for /fixture/nested") },
+    { type: "input_text", text: environment },
+    { type: "input_text", text: "My second instruction." },
+  ]);
+  Object.assign(event.payload, { internal_chat_message_metadata_passthrough: {
+    content_item_kinds: {}, content_item_metadata: [null, 42, {}],
+  } });
+  expect(readRollout(writeRollout([event]))[0].text).toBe("My first instruction.\nMy second instruction.");
+});
+
+test("explicit non-AGENTS provenance takes precedence over envelope fallback", () => {
+  for (const metadata of [
+    { content_item_kinds: ["other.kind"] },
+    { content_item_metadata: [{ provenance: { type: "other" } }] },
+  ]) {
+    const event = message([{ type: "input_text", text: agents() }]);
+    Object.assign(event.payload, { internal_chat_message_metadata_passthrough: metadata });
+    expect(readRollout(writeRollout([event]))[0].text).toBe(agents());
+  }
 });
