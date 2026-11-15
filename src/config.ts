@@ -50,8 +50,8 @@ export interface Config {
   enabled: boolean;
   saveMessages: boolean;
   reasoningLevel: string;
-  // Inject prompt-relevant context on every turn. Off by default — lean
-  // session-start context plus the MCP tools cover depth on demand.
+  // Retrieve task-relevant conclusions after each non-trivial user prompt.
+  // Enabled by default; explicit false leaves recall to the MCP tools.
   injectPerPrompt: boolean;
   // How Honcho session names are derived (default per-directory).
   sessionStrategy: SessionStrategy;
@@ -101,7 +101,7 @@ export function loadConfig(): Config | null {
     enabled: (host?.enabled ?? raw.enabled) !== false,
     saveMessages: (host?.saveMessages ?? raw.saveMessages) !== false,
     reasoningLevel: host?.reasoningLevel ?? raw.reasoningLevel ?? "low",
-    injectPerPrompt: (host?.injectPerPrompt ?? raw.injectPerPrompt) === true,
+    injectPerPrompt: (host?.injectPerPrompt ?? raw.injectPerPrompt) !== false,
     sessionStrategy: host?.sessionStrategy ?? raw.sessionStrategy ?? "per-directory",
     endpoint: host?.endpoint ?? raw.endpoint,
     sessions: raw.sessions,

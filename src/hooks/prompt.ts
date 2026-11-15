@@ -1,6 +1,6 @@
-import { loadConfig, sessionName, memoryKey } from "../config.ts";
-import { renderContext } from "../memory.ts";
-import { readContext, lastInjected, markInjected } from "../cache.ts";
+import { loadConfig, memoryKey } from "../config.ts";
+import { retrieveTaskMemory, renderTaskMemory } from "../memory.ts";
+import { taskAlreadyInjected, markTaskInjected } from "../task-cache.ts";
 
 interface PromptInput {
   prompt?: string;
@@ -8,27 +8,31 @@ interface PromptInput {
   session_id?: string;
 }
 
-const TRIVIAL = /^(y|n|yes|no|ok|okay|sure|thanks|yep|nope|continue|go ahead|do it|proceed)\.?$/i;
+const TRIVIAL = /^(y|n|yes|no|ok|okay|sure|thanks|thank you|yep|nope|continue|go ahead|do it|proceed|да|нет|ок|спасибо|продолжай)[.!?]*$/i;
+const GENERATED = /^<(?:environment_context|turn_aborted|permissions|collaboration_mode|subagent_notification|codex_delegation|system-reminder|user_instructions)\b/i;
 
-// UserPromptSubmit: off by default — session-start context plus the MCP tools
-// cover recall without taxing every turn. When injectPerPrompt is enabled,
-// serve the cached snapshot (no network) and never repeat the same block.
+export function taskQuery(prompt: unknown): string {
+  if (typeof prompt !== "string") return "";
+  const text = prompt.trim();
+  if (!text || TRIVIAL.test(text) || GENERATED.test(text)) return "";
+  if (/^#\s*AGENTS\.md instructions(?:\s|$)/i.test(text) && /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>/i.test(text)) return "";
+  return text.replace(/\s+/g, " ").slice(0, 2000);
+}
+
+// Recall only after the actual prompt is known. No stale-context fallback.
 export async function prompt(input: PromptInput): Promise<string> {
   const config = loadConfig();
   if (!config || !config.enabled || !config.injectPerPrompt) return "";
-
-  const text = (input.prompt ?? "").trim();
-  if (!text || TRIVIAL.test(text)) return "";
-
+  const query = taskQuery(input.prompt);
+  if (!query) return "";
   const cwd = input.cwd || process.cwd();
   const key = memoryKey(config, cwd, input.session_id);
-
-  const cached = readContext(key);
-  if (!cached) return "";
-
-  const block = renderContext(cached, config.peerName, 5);
-  if (!block || block === lastInjected(key)) return "";
-
-  markInjected(key, block);
-  return block;
+  try {
+    const block = renderTaskMemory(await retrieveTaskMemory(config, query));
+    if (!block || taskAlreadyInjected(config, key, block)) return "";
+    markTaskInjected(config, key, block);
+    return block;
+  } catch {
+    return "";
+  }
 }

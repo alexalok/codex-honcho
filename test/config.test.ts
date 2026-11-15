@@ -107,3 +107,15 @@ test("git-branch falls back to directory outside a repo", () => {
   const plain = mkdtempSync(join(tmpdir(), "codex-honcho-plain-"));
   expect(sessionName(cfg, plain)).toBe(basename(plain).toLowerCase().replace(/[^a-z0-9-_]/g, "-"));
 });
+
+
+test("task recall defaults on, respects root opt-out and host override", () => {
+  writeConfig({ apiKey: "k" });
+  expect(loadConfig()!.injectPerPrompt).toBe(true);
+  writeConfig({ apiKey: "k", injectPerPrompt: false });
+  expect(loadConfig()!.injectPerPrompt).toBe(false);
+  writeConfig({ apiKey: "k", injectPerPrompt: false, hosts: { codex: { injectPerPrompt: true } } });
+  expect(loadConfig()!.injectPerPrompt).toBe(true);
+  writeConfig({ apiKey: "k", injectPerPrompt: true, hosts: { codex: { injectPerPrompt: false } } });
+  expect(loadConfig()!.injectPerPrompt).toBe(false);
+});
