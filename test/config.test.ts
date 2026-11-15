@@ -109,8 +109,10 @@ test("git-branch falls back to directory outside a repo", () => {
 });
 
 
-test("task recall defaults on, respects root opt-out and host override", () => {
+test("task recall defaults off, respects root opt-in and host override", () => {
   writeConfig({ apiKey: "k" });
+  expect(loadConfig()!.injectPerPrompt).toBe(false);
+  writeConfig({ apiKey: "k", injectPerPrompt: true });
   expect(loadConfig()!.injectPerPrompt).toBe(true);
   writeConfig({ apiKey: "k", injectPerPrompt: false });
   expect(loadConfig()!.injectPerPrompt).toBe(false);

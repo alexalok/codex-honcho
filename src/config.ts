@@ -51,7 +51,7 @@ export interface Config {
   saveMessages: boolean;
   reasoningLevel: string;
   // Retrieve task-relevant conclusions after each non-trivial user prompt.
-  // Enabled by default; explicit false leaves recall to the MCP tools.
+  // Disabled by default; explicit true enables automatic task recall.
   injectPerPrompt: boolean;
   // How Honcho session names are derived (default per-directory).
   sessionStrategy: SessionStrategy;
@@ -101,7 +101,7 @@ export function loadConfig(): Config | null {
     enabled: (host?.enabled ?? raw.enabled) !== false,
     saveMessages: (host?.saveMessages ?? raw.saveMessages) !== false,
     reasoningLevel: host?.reasoningLevel ?? raw.reasoningLevel ?? "low",
-    injectPerPrompt: (host?.injectPerPrompt ?? raw.injectPerPrompt) !== false,
+    injectPerPrompt: (host?.injectPerPrompt ?? raw.injectPerPrompt) === true,
     sessionStrategy: host?.sessionStrategy ?? raw.sessionStrategy ?? "per-directory",
     endpoint: host?.endpoint ?? raw.endpoint,
     sessions: raw.sessions,

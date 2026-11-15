@@ -14,7 +14,7 @@ let facts: string[];
 let fail = false;
 let server: ReturnType<typeof Bun.serve>;
 function writeConfig(extra: object = {}) {
-  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "test", peerName: "testuser", saveMessages: false,
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "test", peerName: "testuser", saveMessages: false, injectPerPrompt: true,
     endpoint: { baseUrl: `http://127.0.0.1:${server.port}` }, ...extra }));
 }
 const input = { prompt: "How does project auth refresh tokens?", cwd: "/tmp/x", session_id: "s1" };
@@ -43,7 +43,7 @@ afterEach(() => {
   if (savedKey === undefined) delete process.env.HONCHO_API_KEY; else process.env.HONCHO_API_KEY = savedKey;
 });
 
-test("default prompt retrieval sends task query, threshold and peer identity, never profile request", async () => {
+test("opted-in prompt retrieval sends task query, threshold and peer identity, never profile request", async () => {
   const out = await prompt(input);
   expect(out).toContain("Auth refresh uses rotating tokens.");
   expect(out).not.toContain('peer=');
@@ -52,7 +52,8 @@ test("default prompt retrieval sends task query, threshold and peer identity, ne
     filters: { observer_id: "testuser", observed_id: "testuser" } });
   expect(requests.some(r => /context|representation/.test(r.path))).toBe(false);
 });
-test("explicit opt-out and disabled integration make no requests", async () => {
+test("default, explicit opt-out and disabled integration make no requests", async () => {
+  writeConfig({ injectPerPrompt: undefined }); expect(await prompt(input)).toBe("");
   writeConfig({ injectPerPrompt: false }); expect(await prompt(input)).toBe("");
   writeConfig({ enabled: false }); expect(await prompt(input)).toBe("");
   expect(requests).toHaveLength(0);
