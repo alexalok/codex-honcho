@@ -128,3 +128,12 @@ test("SessionStart keeps tool hint during API outage", async () => {
   server.stop(true);
   expect(await recall(input)).toContain("Honcho memory tools");
 });
+
+
+test("empty searches preserve last injected block for repeat recall dedup", async () => {
+  expect(await prompt(input)).toContain("rotating tokens");
+  facts = []; expect(await prompt(input)).toBe("");
+  facts = ["Auth refresh uses rotating tokens."];
+  expect(await prompt(input)).toBe("");
+  expect(requests.filter(r => r.path.endsWith("/conclusions/query"))).toHaveLength(3);
+});

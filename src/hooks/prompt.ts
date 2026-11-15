@@ -32,7 +32,9 @@ export async function prompt(input: PromptInput): Promise<string> {
   try {
     const block = renderTaskMemory(await retrieveTaskMemory(config, query));
     if (taskAlreadyInjected(config, key, block)) return "";
-    markTaskInjected(config, key, block);
+    // An empty successful search completes initial recall, but must not
+    // replace an existing injected-block digest used by repeated recall.
+    if (block || !taskRecallCompleted(config, key)) markTaskInjected(config, key, block);
     return block;
   } catch {
     return "";
