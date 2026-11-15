@@ -50,8 +50,8 @@ export interface Config {
   enabled: boolean;
   saveMessages: boolean;
   reasoningLevel: string;
-  // Retrieve task-relevant conclusions after each non-trivial user prompt.
-  // Disabled by default; explicit true enables automatic task recall.
+  // Continue task recall after the first eligible prompt (default false).
+  // Initial task recall always runs when the integration is enabled.
   injectPerPrompt: boolean;
   // How Honcho session names are derived (default per-directory).
   sessionStrategy: SessionStrategy;

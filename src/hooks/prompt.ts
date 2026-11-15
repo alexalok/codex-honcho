@@ -1,6 +1,6 @@
 import { loadConfig, memoryKey } from "../config.ts";
 import { retrieveTaskMemory, renderTaskMemory } from "../memory.ts";
-import { taskAlreadyInjected, markTaskInjected } from "../task-cache.ts";
+import { taskAlreadyInjected, markTaskInjected, taskRecallCompleted } from "../task-cache.ts";
 
 interface PromptInput {
   prompt?: string;
@@ -19,18 +19,22 @@ export function taskQuery(prompt: unknown): string {
   return text.replace(/\s+/g, " ").slice(0, 2000);
 }
 
-// Recall only after the actual prompt is known. No stale-context fallback.
+// Always recall on the first eligible prompt after SessionStart. The flag
+// controls subsequent prompts only. No stale-context fallback.
 export async function prompt(input: PromptInput): Promise<string> {
   const config = loadConfig();
-  if (!config || !config.enabled || !config.injectPerPrompt) return "";
+  if (!config || !config.enabled) return "";
   const query = taskQuery(input.prompt);
   if (!query) return "";
   const cwd = input.cwd || process.cwd();
   const key = memoryKey(config, cwd, input.session_id);
+  if (!config.injectPerPrompt && taskRecallCompleted(config, key)) return "";
   try {
     const block = renderTaskMemory(await retrieveTaskMemory(config, query));
-    if (!block || taskAlreadyInjected(config, key, block)) return "";
-    markTaskInjected(config, key, block);
+    if (taskAlreadyInjected(config, key, block)) return "";
+    // An empty successful search completes initial recall, but must not
+    // replace an existing injected-block digest used by repeated recall.
+    if (block || !taskRecallCompleted(config, key)) markTaskInjected(config, key, block);
     return block;
   } catch {
     return "";

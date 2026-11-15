@@ -27,3 +27,9 @@ export function markTaskInjected(config: Config, key: string, block: string): vo
     writeFileSync(file, digest(block), { mode: 0o600 });
   } catch { /* Cache failure must not discard useful recall. */ }
 }
+
+// A successful empty search also completes initial recall. Failed searches
+// leave no marker so the next eligible prompt can retry.
+export function taskRecallCompleted(config: Config, key: string): boolean {
+  try { return /^[a-f0-9]{64}$/.test(readFileSync(path(config, key), "utf8")); } catch { return false; }
+}
