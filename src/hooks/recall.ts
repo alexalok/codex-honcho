@@ -1,8 +1,8 @@
 import { loadConfig, sessionName, memoryKey, honchoSessionUrl } from "../config.ts";
-import { createSession, renderContext } from "../memory.ts";
-import { readContext, writeContext, isStale, markInjected } from "../cache.ts";
-import { recallContext } from "../recall-context.ts";
-import { projectScopeId, resolveScope, syncProjectScope, scopeHint } from "../project-scope.ts";
+import { createSession } from "../memory.ts";
+import { resetTaskInjection } from "../task-cache.ts";
+import { writeContext } from "../cache.ts";
+import { resolveScope, projectScopeId, syncProjectScope, scopeHint } from "../project-scope.ts";
 import { recordSessionIdentity } from "../session-identity.ts";
 
 interface RecallInput {
@@ -10,54 +10,34 @@ interface RecallInput {
   session_id?: string;
 }
 
-const CACHE_TTL_MS = 10 * 60 * 1000;
-
-
-// Injected once at session start so the model actively queries memory through
-// the Honcho MCP tools rather than leaning on heavy per-turn injection.
 const TOOL_HINT =
-  "Honcho memory tools are available via MCP — call honcho search / get_peer_context to recall facts " +
-  "across sessions, and honcho chat for questions about the user's history. Prefer querying over guessing.";
+  "Honcho memory tools are available via MCP. Use honcho search for task-relevant history " +
+  "and honcho chat for specific questions about past decisions.";
 
-// SessionStart: materialize the session and surface a lean snapshot of what we
-// know, plus a nudge to use the MCP tools for anything deeper.
-export async function recall(input: RecallInput): Promise<string> {
+// SessionStart has no task query: initialize writeback identity and expose
+// tools, but never fetch or inject a generic user profile.
+export async function recall(input: RecallInput, resolvedProject?: Awaited<ReturnType<typeof resolveScope>>): Promise<string> {
   const config = loadConfig();
   if (!config || !config.enabled) return "";
-
   const cwd = input.cwd || process.cwd();
   const name = sessionName(config, cwd, input.session_id);
   const key = memoryKey(config, cwd, input.session_id);
-  if (config.saveMessages) recordSessionIdentity(config, cwd, input.session_id);
-
-  const project = await resolveScope(config, input.session_id);
-  // Never fall back to global recall after a failed desktop lookup.
+  const project = resolvedProject ?? await resolveScope(config, input.session_id);
   if (project.status === "unknown") {
     writeContext(key, null, null);
     return scopeHint(project);
   }
-
-  // Create + materialize the session once, here at SessionStart.
-  if (config.saveMessages) await createSession(config, name);
-
-  if (config.saveMessages && project.status !== "disabled") await syncProjectScope(config, name, project);
   const boundary = project.status === "project" ? projectScopeId(project) : project.status;
-  let ctx = !isStale(key, CACHE_TTL_MS) ? readContext(key) : null;
-  if (!ctx || ctx.boundary !== boundary) {
-    const fetched = await recallContext(config, project.status === "project" ? projectScopeId(project) : undefined);
-    writeContext(key, fetched.representation, fetched.peerCard, boundary);
-    ctx = { representation: fetched.representation, peerCard: fetched.peerCard, at: Date.now() };
+  resetTaskInjection(config, config.scopeStrategy === "desktop-project" ? `${key}:${boundary}` : key);
+  writeContext(key, null, null, boundary);
+  if (config.saveMessages) recordSessionIdentity(config, cwd, input.session_id);
+  try {
+    if (config.saveMessages) {
+      await createSession(config, name);
+      if (project.status !== "disabled") await syncProjectScope(config, name, project);
+    }
+  } catch {
+    // Tool access remains useful during an API outage; writeback can retry.
   }
-
-  const block = renderContext(ctx, config.peerName, 5);
-  if (block) markInjected(key, block);
-
-  // Codex surfaces SessionStart hook output to the user, so we append a deep
-  // link to this session in the Honcho GUI (parity with the Claude Code
-  // integration). We have the live session_id here, so the link is exact for
-  // every strategy — including chat-instance.
-  const link = `View this session in Honcho: ${honchoSessionUrl(config.workspace, name)}`;
-
-  const parts = [block, scopeHint(project), TOOL_HINT, link].filter(Boolean);
-  return parts.join("\n");
+  return `${scopeHint(project)}\n${TOOL_HINT}\nView this session in Honcho: ${honchoSessionUrl(config.workspace, name)}`;
 }

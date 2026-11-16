@@ -30,6 +30,10 @@ interface RolloutEvent {
     type?: string;
     role?: string;
     content?: unknown;
+    internal_chat_message_metadata_passthrough?: {
+      content_item_kinds?: unknown;
+      content_item_metadata?: unknown;
+    };
     output?: unknown;
     name?: string;
     namespace?: string;
@@ -57,6 +61,35 @@ const CODEX_SYSTEM_TAGS = [
 function isInjectedSystemTurn(text: string): boolean {
   const t = text.trimStart();
   return CODEX_SYSTEM_TAGS.some((tag) => t.startsWith(`<${tag}>`) || t.startsWith(`<${tag} `));
+}
+
+// Older rollouts lack provenance. Require the complete generated envelope,
+// not just an AGENTS heading or a mention inside an ordinary user request.
+const AGENTS_ENVELOPE = /^# AGENTS\.md instructions(?: for [^\r\n]+)?\r?\n\s*<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*(?:<environment_context>[\s\S]*<\/environment_context>\s*)?$/;
+const ENVIRONMENT_ENVELOPE = /^<environment_context>[\s\S]*<\/environment_context>$/;
+
+function authoredUserText(payload: NonNullable<RolloutEvent["payload"]>): string {
+  const content = payload.content;
+  const metadata = payload.internal_chat_message_metadata_passthrough;
+  const kinds = metadata?.content_item_kinds;
+  const provenance = metadata?.content_item_metadata;
+  const blocks = Array.isArray(content) ? content : [{ type: "input_text", text: content }];
+  let removedAgents = false;
+  const retained = blocks.filter((block, index) => {
+    if (!block || !TEXT_BLOCK_TYPES.has(block.type) || typeof block.text !== "string") return false;
+    const kind = Array.isArray(kinds) ? kinds[index] : undefined;
+    const origin = Array.isArray(provenance) ? provenance[index]?.provenance?.type : undefined;
+    const hasProvenance = typeof kind === "string" || typeof origin === "string";
+    const injected = kind === "agents_md.instructions" || origin === "agents_md"
+      || (!hasProvenance && AGENTS_ENVELOPE.test(block.text.trim()));
+    if (injected) removedAgents = true;
+    return !injected;
+  });
+  // Desktop bundles environment context with AGENTS in the same response item.
+  // Keep any authored blocks beside it, but do not save the companion context.
+  return collectText(removedAgents
+    ? retained.filter((block) => !ENVIRONMENT_ENVELOPE.test(block.text.trim()))
+    : retained);
 }
 
 function collectText(content: unknown, types = TEXT_BLOCK_TYPES): string {
@@ -116,8 +149,11 @@ export function readRolloutItems(path: string): RolloutItem[] {
     if (!text) continue;
     if (payload.role === "user" && isInjectedSystemTurn(text)) continue;
 
-    const turns: Turn[] = payload.role === "user"
-      ? splitDelegations(text, "user-message")
+    const authored = payload.role === "user" ? authoredUserText(payload) : text;
+    // These messages were counted by both earlier parsers. Preserve the slot
+    // even when every block was injected, so saved cursors never shift.
+    const turns: Turn[] = !authored ? [] : payload.role === "user"
+      ? splitDelegations(authored, "user-message")
       : [{ role: "assistant", text }];
     items.push({ legacy: true, turns: turns.map((t) => ({ ...t, at: event.timestamp })) });
   }

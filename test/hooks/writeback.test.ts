@@ -156,3 +156,47 @@ test("malformed wrappers and ignored tool outputs do not destabilize deduplicati
   expect(capture("s1", rollout)).toBe(0);
   expect(readQueue("s1").map((e) => e.role)).toEqual(["delegation", "delegation", "user"]);
 });
+
+const injectedAgents = "# AGENTS.md instructions\n\n<INSTRUCTIONS>Use pnpm.</INSTRUCTIONS>";
+
+for (const format of [undefined, "rollout-items-v2"] as const) {
+  test(`AGENTS filtering preserves ${format ?? "legacy"} cursor offsets across upgrade and append`, () => {
+    events([
+      message(injectedAgents),
+      modern(wrapper("old tool delivery")),
+      message("old human"),
+      message("old answer", "assistant"),
+      message(injectedAgents),
+      message("new human"),
+    ]);
+    writeCursor("s1", format ? 4 : 3, format);
+    expect(capture("s1", rollout)).toBe(1);
+    expect(readQueue("s1").map((e) => e.text)).toEqual(["new human"]);
+    expect(readCaptureCursor("s1")).toEqual({ count: 6, format: "rollout-items-v2" });
+    expect(capture("s1", rollout)).toBe(0);
+    appendFileSync(rollout, JSON.stringify(message("next human")) + "\n");
+    expect(capture("s1", rollout)).toBe(1);
+    expect(capture("s1", rollout)).toBe(0);
+    expect(readQueue("s1").map((e) => e.text)).toEqual(["new human", "next human"]);
+  });
+
+  test(`AGENTS filtering does not replay an unchanged ${format ?? "legacy"} tail`, () => {
+    events([message(injectedAgents), message("already captured")]);
+    writeCursor("s1", 2, format);
+    expect(capture("s1", rollout)).toBe(0);
+    appendFileSync(rollout, JSON.stringify(message("new human")) + "\n");
+    expect(capture("s1", rollout)).toBe(1);
+    expect(readQueue("s1").map((e) => e.text)).toEqual(["new human"]);
+  });
+}
+
+test("a fresh AGENTS-only rollout advances its counted slot without enqueueing instructions", () => {
+  events([message(injectedAgents)]);
+  expect(capture("s1", rollout)).toBe(0);
+  expect(readCaptureCursor("s1")).toEqual({ count: 1, format: "rollout-items-v2" });
+  expect(readQueue("s1")).toEqual([]);
+  appendFileSync(rollout, JSON.stringify(message("first real prompt")) + "\n");
+  expect(capture("s1", rollout)).toBe(1);
+  expect(capture("s1", rollout)).toBe(0);
+  expect(readQueue("s1").map((e) => e.text)).toEqual(["first real prompt"]);
+});
