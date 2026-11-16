@@ -1,6 +1,8 @@
 import { loadConfig, sessionName, memoryKey, honchoSessionUrl } from "../config.ts";
 import { createSession, renderContext } from "../memory.ts";
 import { readContext, writeContext, isStale, markInjected } from "../cache.ts";
+import { recallContext } from "../recall-context.ts";
+import { projectScopeId, resolveScope, syncProjectScope, scopeHint } from "../project-scope.ts";
 import { recordSessionIdentity } from "../session-identity.ts";
 
 interface RecallInput {
@@ -9,7 +11,7 @@ interface RecallInput {
 }
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const MAX_CONCLUSIONS = 8;
+
 
 // Injected once at session start so the model actively queries memory through
 // the Honcho MCP tools rather than leaning on heavy per-turn injection.
@@ -28,13 +30,22 @@ export async function recall(input: RecallInput): Promise<string> {
   const key = memoryKey(config, cwd, input.session_id);
   if (config.saveMessages) recordSessionIdentity(config, cwd, input.session_id);
 
-  // Create + materialize the session once, here at SessionStart.
-  const { userPeer } = await createSession(config, name);
+  const project = await resolveScope(config, input.session_id);
+  // Never fall back to global recall after a failed desktop lookup.
+  if (project.status === "unknown") {
+    writeContext(key, null, null);
+    return scopeHint(project);
+  }
 
+  // Create + materialize the session once, here at SessionStart.
+  if (config.saveMessages) await createSession(config, name);
+
+  if (config.saveMessages && project.status !== "disabled") await syncProjectScope(config, name, project);
+  const boundary = project.status === "project" ? projectScopeId(project) : project.status;
   let ctx = !isStale(key, CACHE_TTL_MS) ? readContext(key) : null;
-  if (!ctx) {
-    const fetched = await userPeer.context({ maxConclusions: MAX_CONCLUSIONS, includeMostFrequent: true });
-    writeContext(key, fetched.representation, fetched.peerCard);
+  if (!ctx || ctx.boundary !== boundary) {
+    const fetched = await recallContext(config, project.status === "project" ? projectScopeId(project) : undefined);
+    writeContext(key, fetched.representation, fetched.peerCard, boundary);
     ctx = { representation: fetched.representation, peerCard: fetched.peerCard, at: Date.now() };
   }
 
@@ -47,6 +58,6 @@ export async function recall(input: RecallInput): Promise<string> {
   // every strategy — including chat-instance.
   const link = `View this session in Honcho: ${honchoSessionUrl(config.workspace, name)}`;
 
-  const parts = [block, TOOL_HINT, link].filter(Boolean);
+  const parts = [block, scopeHint(project), TOOL_HINT, link].filter(Boolean);
   return parts.join("\n");
 }

@@ -14,6 +14,7 @@ export interface CachedContext {
   representation?: string | null;
   peerCard?: string[] | null;
   at: number;
+  boundary?: string;
   lastInjected?: string;
 }
 
@@ -29,12 +30,12 @@ export function readContext(key: string): CachedContext | null {
   }
 }
 
-export function writeContext(key: string, representation?: string | null, peerCard?: string[] | null): void {
+export function writeContext(key: string, representation?: string | null, peerCard?: string[] | null, boundary?: string): void {
   mkdirSync(cacheDir(), { recursive: true });
   const prev = readContext(key);
   writeFileSync(
     cachePath(key),
-    JSON.stringify({ representation, peerCard, at: Date.now(), lastInjected: prev?.lastInjected }),
+    JSON.stringify({ representation, peerCard, boundary, at: Date.now(), lastInjected: prev?.lastInjected }),
   );
 }
 
