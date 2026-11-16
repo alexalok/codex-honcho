@@ -55,7 +55,7 @@ function manyEntries(n: number) {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "codex-honcho-flush-"));
   process.env.HONCHO_CONFIG_DIR = dir;
-  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "hch-test", peerName: "tester" }));
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "test", peerName: "tester" }));
   batches = [];
   addCalls = 0;
   failOnCalls = new Set();
@@ -234,7 +234,7 @@ test("takes over a lock owned by a dead process", async () => {
 });
 
 test("does not upload when saveMessages is disabled", async () => {
-  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "hch-test", peerName: "tester", saveMessages: false }));
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ apiKey: "test", peerName: "tester", saveMessages: false }));
   enqueue("s1", [{ role: "user", text: "queued", at: "2026-06-09T00:00:00Z" }]);
 
   await runFlush();
@@ -244,7 +244,7 @@ test("does not upload when saveMessages is disabled", async () => {
 
 function delegationConfig() {
   writeFileSync(join(dir, "config.json"), JSON.stringify({
-    apiKey: "fixture-only", peerName: "alex", aiPeer: "codex-overseer",
+    apiKey: "test", peerName: "alex", aiPeer: "codex-overseer",
     endpoint: { baseUrl: "http://127.0.0.1:1/v3" },
   }));
   return loadConfig()!;

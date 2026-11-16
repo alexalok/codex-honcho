@@ -10,7 +10,7 @@ import { SOURCE, UNKNOWN, wrapper } from "./fixtures/delegation.ts";
 const original = process.env.HONCHO_CONFIG_DIR;
 let dir: string;
 const config: Config = {
-  apiKey: "fixture-only", workspace: "fixture-workspace", peerName: "alex", aiPeer: "codex-overseer",
+  apiKey: "test", workspace: "fixture-workspace", peerName: "alex", aiPeer: "codex-overseer",
   enabled: true, saveMessages: true, reasoningLevel: "low", injectPerPrompt: false,
   sessionStrategy: "chat-instance", endpoint: { baseUrl: "http://127.0.0.1:1/v3" },
 };

@@ -33,7 +33,7 @@ test("returns null without an API key", () => {
 
 test("resolves the codex host block over root fields", () => {
   writeConfig({
-    apiKey: "root-key",
+    apiKey: "root",
     peerName: "testuser",
     workspace: "root-ws",
     aiPeer: "root-ai",
@@ -42,7 +42,7 @@ test("resolves the codex host block over root fields", () => {
   const cfg = loadConfig()!;
   expect(cfg.workspace).toBe("codex-ws");
   expect(cfg.aiPeer).toBe("codex");
-  expect(cfg.apiKey).toBe("root-key");
+  expect(cfg.apiKey).toBe("root");
 });
 
 test("defaults workspace and aiPeer to 'codex'", () => {
@@ -53,9 +53,9 @@ test("defaults workspace and aiPeer to 'codex'", () => {
 });
 
 test("env API key overrides the file", () => {
-  writeConfig({ apiKey: "file-key", peerName: "testuser" });
-  process.env.HONCHO_API_KEY = "env-key";
-  expect(loadConfig()!.apiKey).toBe("env-key");
+  writeConfig({ apiKey: "file", peerName: "testuser" });
+  process.env.HONCHO_API_KEY = "env";
+  expect(loadConfig()!.apiKey).toBe("env");
 });
 
 test("globalOverride applies flat fields across hosts", () => {
