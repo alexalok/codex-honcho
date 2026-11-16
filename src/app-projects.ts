@@ -73,7 +73,9 @@ export async function resolveChatProject(
     const match = (rows: any[]) => {
       if (!Array.isArray(rows)) throw new Error("invalid thread list");
       const matches = rows.filter(t => t.id === threadId && t.kind === "codex" && t.hostId === hostId);
-      if (matches.length > 1) throw new Error("ambiguous chat");
+      // Some app versions may include pinned chats in both collections.
+      // Repeated identity is harmless; conflicting membership is not.
+      if (matches.some(t => t.projectId !== matches[0].projectId)) throw new Error("ambiguous chat");
       return matches[0];
     };
     const recent = await call("list_threads", { limit: 50 });

@@ -63,3 +63,10 @@ test("pipe accepts fragmented frames and rejects oversized responses and timeout
     } finally { for (const s of sockets) s.destroy(); await new Promise<void>(r => server.close(() => r())); }
   }
 });
+
+test("coalesces pinned/recent duplicates but rejects conflicting project assignments", async () => {
+  const same = api([{ threads: [chat], pinnedThreads: [{ ...chat, pinnedIndex: 1 }] }]);
+  expect((await resolveChatProject("chat", same.request)).status).toBe("project");
+  const conflict = api([{ threads: [chat], pinnedThreads: [{ ...chat, projectId: "other" }] }]);
+  expect((await resolveChatProject("chat", conflict.request)).status).toBe("unknown");
+});
