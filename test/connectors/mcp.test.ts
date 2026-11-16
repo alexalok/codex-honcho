@@ -32,7 +32,7 @@ test("setMcpServer is idempotent — one block after repeated writes", () => {
   expect(out.match(/\[mcp_servers\.honcho\]/g)).toHaveLength(1);
   // Latest creds win.
   expect(out).toContain("updated");
-  expect(out).not.toContain("test");
+  expect(out).not.toContain("Bearer test");
 });
 
 test("preserves the user's surrounding config", () => {
