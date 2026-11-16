@@ -82,7 +82,7 @@ test("both delegation transports survive repeated capture, alongside normal turn
 
 test("capture snapshots verified identity and preserves unknown source provenance", () => {
   writeFileSync(join(process.env.HONCHO_CONFIG_DIR!, "config.json"), JSON.stringify({
-    apiKey: "fixture-only", peerName: "alex", aiPeer: "root-fallback",
+    apiKey: "test", peerName: "alex", aiPeer: "root-fallback",
     hosts: { codex: { aiPeer: "codex-overseer" } }, sessions: { "/fixture/source": "known-source" },
   }));
   const config = loadConfig()!;

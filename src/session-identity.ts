@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { honchoClientOptions, sessionName, type Config } from "./config.ts";
 import type { Turn } from "./transcript/codex.ts";
 
@@ -47,6 +47,17 @@ export function recordSessionIdentity(config: Config, cwd: string, threadId?: st
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     const existing = readIdentity(path);
+    const legacySession = `${basename(cwd).toLowerCase().replace(/[^a-z0-9-_]/g, "-")}-${threadId.toLowerCase().replace(/[^a-z0-9-_]/g, "-").slice(0, 8)}`;
+    if (existing && existing.thread === thread && existing.peer === record.peer && existing.human === record.human &&
+      config.sessionStrategy === "chat-instance" && !config.sessions?.[cwd] &&
+      existing.session === legacySession && record.session === threadId) {
+      // Naming-version migration only. Preserve conflict markers and never use
+      // this exception for peer/human changes or arbitrary session overrides.
+      const temporary = `${path}.${process.pid}.tmp`;
+      writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
+      renameSync(temporary, path);
+      return;
+    }
     if (existing && (existing.peer !== record.peer || existing.human !== record.human || existing.session !== record.session)) {
       // A changed configuration makes historical attribution ambiguous. Keep
       // the original evidence and mark the mapping unusable, including on retry.

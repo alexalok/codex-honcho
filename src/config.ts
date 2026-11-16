@@ -32,6 +32,7 @@ interface HostBlock {
   reasoningLevel?: string;
   injectPerPrompt?: boolean;
   sessionStrategy?: SessionStrategy;
+  scopeStrategy?: "none" | "desktop-project";
   endpoint?: { environment?: "production" | "local"; baseUrl?: string };
 }
 
@@ -55,6 +56,7 @@ export interface Config {
   injectPerPrompt: boolean;
   // How Honcho session names are derived (default per-directory).
   sessionStrategy: SessionStrategy;
+  scopeStrategy?: "none" | "desktop-project";
   endpoint?: { environment?: "production" | "local"; baseUrl?: string };
   sessions?: Record<string, string>;
 }
@@ -103,6 +105,7 @@ export function loadConfig(): Config | null {
     reasoningLevel: host?.reasoningLevel ?? raw.reasoningLevel ?? "low",
     injectPerPrompt: (host?.injectPerPrompt ?? raw.injectPerPrompt) === true,
     sessionStrategy: host?.sessionStrategy ?? raw.sessionStrategy ?? "per-directory",
+    scopeStrategy: host?.scopeStrategy ?? raw.scopeStrategy ?? "none",
     endpoint: host?.endpoint ?? raw.endpoint,
     sessions: raw.sessions,
   };
@@ -164,7 +167,7 @@ function slug(s: string): string {
 // derived per strategy:
 //   per-directory  → <repo>                 (one session per project dir)
 //   git-branch     → <repo>-<branch>        (per branch; falls back to repo)
-//   chat-instance  → <repo>-<short id>      (one session per Codex conversation)
+//   chat-instance  → <full chat id>      (one session per Codex conversation)
 // No peer prefix — the workspace already isolates a user's data.
 export function sessionName(config: Config, cwd: string, sessionId?: string): string {
   const override = config.sessions?.[cwd];
@@ -177,7 +180,7 @@ export function sessionName(config: Config, cwd: string, sessionId?: string): st
       return branch ? `${repo}-${slug(branch)}` : repo;
     }
     case "chat-instance":
-      return sessionId ? `${repo}-${slug(sessionId).slice(0, 8)}` : repo;
+      return sessionId ? sessionId : repo;
     case "per-directory":
     default:
       return repo;

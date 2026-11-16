@@ -66,7 +66,7 @@ function mcpIdentity(): McpIdentity | null {
 // bundled build is JS run under `node` (no bun required); a local/dev clone is
 // TypeScript run under `bun`. Detect which by the entry's extension.
 function hookInvoke(entry: string): (verb: string) => string {
-  const runner = entry.endsWith(".ts") ? "bun run" : "node";
+  const runner = entry.endsWith(".ts") ? "bun run" : 'exec "${CODEX_MCP_NODE_PATH:-node}"';
   return (verb) => `${runner} ${JSON.stringify(entry)} ${verb}`;
 }
 

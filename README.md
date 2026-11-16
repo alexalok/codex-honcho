@@ -129,7 +129,7 @@ Controls how Codex conversations map to Honcho sessions:
 | --- | --- | --- |
 | `per-directory` (default) | `my-app` | Most users — each project accumulates its own memory |
 | `git-branch` | `my-app-main` | Feature-branch workflows where context per branch matters |
-| `chat-instance` | `my-app-019ea7df` | Ephemeral usage — a clean slate per conversation |
+| `chat-instance` | `019ea7df-805e-76d1-af52-0123456789ab` | One session per conversation; peer memory remains available across chats |
 
 An explicit `sessions[cwd]` mapping overrides all strategies. Environment overrides: `HONCHO_API_KEY`, `HONCHO_PEER_NAME`, `HONCHO_CONFIG_DIR`.
 
@@ -234,3 +234,55 @@ MIT — see [LICENSE](LICENSE)
 - **Discord**: [Join the community](https://discord.gg/plasticlabs)
 - **X**: [@honchodotdev](https://x.com/honchodotdev)
 - **Plastic Labs**: [plasticlabs.ai](https://plasticlabs.ai)
+
+### Desktop project scopes
+
+Set `hosts.codex.sessionStrategy` to `"chat-instance"` and
+`hosts.codex.scopeStrategy` to `"desktop-project"` in `~/.honcho/config.json`.
+The default scope strategy remains `"none"` for CLI compatibility. Explicit
+`sessions` overrides are incompatible with desktop scopes: shared sessions cannot
+safely belong to independently moved chats.
+
+Chat-instance session names now use the full, unchanged Codex chat ID, independent
+of cwd. Existing short-ID/directory sessions are not renamed or backfilled.
+Already-sent messages stay in their original sessions; new messages use the full ID.
+
+The desktop adapter reuses the framed JSON-RPC transport from
+[jev-skill-router PR #4](https://github.com/alexalok/jev-skill-router/pull/4).
+It calls only `list_threads` and `list_projects`: recent/pinned entries first,
+then paginated active/archived history. Matching includes host identity. No private
+app DB, global state file, directory-name inference, or Git fallback is used.
+A lookup is bounded to eight seconds and 100 pages per history category.
+
+Scopes use `codex-project-<sha256([hostId,projectId])>`; creation metadata stores
+project ID, name and host. Names can change without changing scope identity.
+Worktree chats follow their desktop project assignment. Explicit `projectId: null`
+means projectless: no managed scope and normal global peer recall. Missing chats,
+missing fields, unavailable pipe or malformed responses mean unknown: suppress
+startup recall and retain queued messages for a later retry. Unknown never means
+projectless. CLI usage should leave desktop scopes disabled.
+
+SessionStart and writeback reconcile managed membership; moving a chat removes its
+old managed scope membership before adding the new one. Moving to projectless
+removes managed memberships. Server reconciliation/backfill is asynchronous, and
+moves affect the whole chat's history. Unrelated, externally managed memberships
+are not removed. Membership journals are isolated by Honcho endpoint/workspace. Concurrent hooks
+serialize membership changes. A process killed during the tiny stale-lock recovery
+section can leave a `.lock.recovery` guard; inspect its owner before manually
+removing it. Queued messages remain pending while reconciliation is blocked.
+
+Automatic project recall starts on the first eligible prompt, using the task query
+against the scope's representation with frequent-fact fallback disabled, at most
+six matches and maximum search distance 0.5. Results use the same bounded, escaped
+historical-fact renderer as unscoped task recall. SessionStart never loads a generic
+representation or global peer card. Context cache checks the scope boundary on resume and each prompt, including when
+per-prompt injection is disabled. Project moves refresh the scope hint. MCP tools are
+still workspace-wide: the hook supplies the scope ID and tells the agent to pass
+it for project queries; intentional cross-project queries may omit it. This is
+recall organization, not an API-key authorization boundary.
+
+The desktop pipe is internal and can change. On macOS hooks must use
+`exec "${CODEX_MCP_NODE_PATH:-node}" ...` so the signed runtime connects directly
+under the hook host. Shell invocation alone does not prove hook access. Existing
+hook registrations need updating and may require Codex's normal hook trust approval.
+Do not run the installer merely to update hooks if your MCP configuration is custom.

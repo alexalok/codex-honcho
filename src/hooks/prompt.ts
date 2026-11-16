@@ -2,6 +2,10 @@ import { loadConfig, memoryKey } from "../config.ts";
 import { retrieveTaskMemory, renderTaskMemory } from "../memory.ts";
 import { taskAlreadyInjected, markTaskInjected, taskRecallCompleted } from "../task-cache.ts";
 
+import { readContext, writeContext } from "../cache.ts";
+import { resolveScope, projectScopeId, scopeHint } from "../project-scope.ts";
+import { recall } from "./recall.ts";
+
 interface PromptInput {
   prompt?: string;
   cwd?: string;
@@ -27,16 +31,29 @@ export async function prompt(input: PromptInput): Promise<string> {
   const query = taskQuery(input.prompt);
   if (!query) return "";
   const cwd = input.cwd || process.cwd();
-  const key = memoryKey(config, cwd, input.session_id);
+  let key = memoryKey(config, cwd, input.session_id);
+  let scope: string | undefined;
+  let hint = "";
+  if (config.scopeStrategy === "desktop-project") {
+    const project = await resolveScope(config, input.session_id);
+    if (project.status === "unknown") {
+      writeContext(key, null, null);
+      return scopeHint(project);
+    }
+    scope = project.status === "project" ? projectScopeId(project) : undefined;
+    const boundary = scope ?? project.status;
+    if (readContext(key)?.boundary !== boundary) hint = await recall(input, project);
+    key = `${key}:${boundary}`;
+  }
   if (!config.injectPerPrompt && taskRecallCompleted(config, key)) return "";
   try {
-    const block = renderTaskMemory(await retrieveTaskMemory(config, query));
-    if (taskAlreadyInjected(config, key, block)) return "";
+    const block = renderTaskMemory(await retrieveTaskMemory(config, query, scope));
+    if (taskAlreadyInjected(config, key, block)) return hint;
     // An empty successful search completes initial recall, but must not
     // replace an existing injected-block digest used by repeated recall.
     if (block || !taskRecallCompleted(config, key)) markTaskInjected(config, key, block);
-    return block;
+    return [hint, block].filter(Boolean).join("\n");
   } catch {
-    return "";
+    return hint;
   }
 }

@@ -1,3 +1,4 @@
+import { recallContext } from "./recall-context.ts";
 import { Honcho } from "@honcho-ai/sdk";
 import { honchoClientOptions, type Config } from "./config.ts";
 
@@ -30,7 +31,8 @@ export async function getSession(config: Config, name: string) {
 
 // Query only task-matching self-conclusions. Never request a peer card or a
 // generic representation, even when search returns no matches.
-export async function retrieveTaskMemory(config: Config, query: string): Promise<string[]> {
+export async function retrieveTaskMemory(config: Config, query: string, scope?: string): Promise<string[]> {
+  if (scope) return (await recallContext(config, scope, query)).representation?.split("\n") ?? [];
   const honcho = new Honcho({ ...honchoClientOptions(config), timeout: 4000, maxRetries: 0 });
   const peer = await honcho.peer(config.peerName);
   const results = await peer.conclusions.query(query, 6, 0.5);

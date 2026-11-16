@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { loadConfig, sessionName, memoryKey, type Config } from "../config.ts";
+import { resolveScope, syncProjectScope } from "../project-scope.ts";
 import { getSession } from "../memory.ts";
 import { readQueue, sentCount, setSentCount, queueDir, safe, type QueueEntry } from "../queue.ts";
 import { hasDelegationMarker, splitDelegations } from "../transcript/delegation.ts";
@@ -154,7 +155,14 @@ export async function flush(input: FlushInput): Promise<string> {
     const start = sentCount(key);
     if (all.length - start <= 0) return "";
 
+    const project = await resolveScope(config, input.session_id);
+    // Retain the queue when membership cannot be established. A later hook retries.
+    if (project.status === "unknown") return "";
     const handles = await getSession(config, name);
+    if (project.status !== "disabled") {
+      await handles.session.addPeers([handles.userPeer, handles.aiPeer]);
+      await syncProjectScope(config, name, project);
+    }
     const { session } = handles;
     const peers = new Map<string, SessionHandles["aiPeer"]>();
     let batch: PeerMessage[] = [];

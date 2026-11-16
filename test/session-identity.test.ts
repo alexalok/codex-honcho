@@ -10,7 +10,7 @@ import { SOURCE, UNKNOWN, wrapper } from "./fixtures/delegation.ts";
 const original = process.env.HONCHO_CONFIG_DIR;
 let dir: string;
 const config: Config = {
-  apiKey: "fixture-only", workspace: "fixture-workspace", peerName: "alex", aiPeer: "codex-overseer",
+  apiKey: "test", workspace: "fixture-workspace", peerName: "alex", aiPeer: "codex-overseer",
   enabled: true, saveMessages: true, reasoningLevel: "low", injectPerPrompt: false,
   sessionStrategy: "chat-instance", endpoint: { baseUrl: "http://127.0.0.1:1/v3" },
 };
@@ -64,4 +64,25 @@ test("unknown delegation peer cannot collide with either configured conversation
   expect(unknownDelegationPeer(config)).toBe("codex-delegation-unknown");
   expect(unknownDelegationPeer({ ...config, peerName: "codex-delegation-unknown", aiPeer: "codex-delegation-unknown-unknown" }))
     .toBe("codex-delegation-unknown-unknown-unknown");
+});
+
+test("migrates legacy short-ID session names without losing delegation identity", () => {
+  const cwd = "/fixture/source";
+  const legacy = `source-${SOURCE.slice(0, 8)}`;
+  recordSessionIdentity({ ...config, sessions: { [cwd]: legacy } }, cwd, SOURCE);
+  recordSessionIdentity(config, cwd, SOURCE);
+  expect(attributeDelegation(task(), config).delegation?.sender).toMatchObject({ peer: config.aiPeer, session: SOURCE });
+  recordSessionIdentity(config, cwd, SOURCE);
+  expect(attributeDelegation(task(), config).delegation?.sender?.session).toBe(SOURCE);
+});
+
+test("legacy naming migration never forgives peer changes or arbitrary session changes", () => {
+  const cwd = "/fixture/source";
+  recordSessionIdentity({ ...config, sessions: { [cwd]: `source-${SOURCE.slice(0, 8)}` } }, cwd, SOURCE);
+  recordSessionIdentity({ ...config, aiPeer: "different-peer" }, cwd, SOURCE);
+  recordSessionIdentity(config, cwd, SOURCE);
+  expect(attributeDelegation(task(), config).delegation?.sender).toBeUndefined();
+  recordSessionIdentity({ ...config, sessions: { [cwd]: "arbitrary-session" } }, cwd, UNKNOWN);
+  recordSessionIdentity(config, cwd, UNKNOWN);
+  expect(attributeDelegation(task(UNKNOWN), config).delegation?.sender).toBeUndefined();
 });

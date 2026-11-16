@@ -33,7 +33,7 @@ test("returns null without an API key", () => {
 
 test("resolves the codex host block over root fields", () => {
   writeConfig({
-    apiKey: "root-key",
+    apiKey: "root",
     peerName: "testuser",
     workspace: "root-ws",
     aiPeer: "root-ai",
@@ -42,7 +42,7 @@ test("resolves the codex host block over root fields", () => {
   const cfg = loadConfig()!;
   expect(cfg.workspace).toBe("codex-ws");
   expect(cfg.aiPeer).toBe("codex");
-  expect(cfg.apiKey).toBe("root-key");
+  expect(cfg.apiKey).toBe("root");
 });
 
 test("defaults workspace and aiPeer to 'codex'", () => {
@@ -53,9 +53,9 @@ test("defaults workspace and aiPeer to 'codex'", () => {
 });
 
 test("env API key overrides the file", () => {
-  writeConfig({ apiKey: "file-key", peerName: "testuser" });
-  process.env.HONCHO_API_KEY = "env-key";
-  expect(loadConfig()!.apiKey).toBe("env-key");
+  writeConfig({ apiKey: "file", peerName: "testuser" });
+  process.env.HONCHO_API_KEY = "env";
+  expect(loadConfig()!.apiKey).toBe("env");
 });
 
 test("globalOverride applies flat fields across hosts", () => {
@@ -82,10 +82,12 @@ test("explicit session override wins", () => {
   expect(sessionName(cfg, "/repo/x")).toBe("pinned-session");
 });
 
-test("chat-instance strategy appends a short Codex session id", () => {
+test("chat-instance strategy preserves the full Codex chat id", () => {
   writeConfig({ apiKey: "k", peerName: "testuser", hosts: { codex: { sessionStrategy: "chat-instance" } } });
   const cfg = loadConfig()!;
-  expect(sessionName(cfg, "/repo/my-app", "019ea7df-805e-76d1-af52")).toBe("my-app-019ea7df");
+  expect(sessionName(cfg, "/repo/my-app", "019ea7df-805e-76d1-af52")).toBe("019ea7df-805e-76d1-af52");
+  expect(sessionName(cfg, "/other/worktree", "019ea7df-805e-76d1-af52")).toBe("019ea7df-805e-76d1-af52");
+  expect(sessionName(cfg, "/repo/my-app", "019ea7df-805e-76d1-af53")).not.toBe(sessionName(cfg, "/repo/my-app", "019ea7df-805e-76d1-af52"));
   // No session id → falls back to the directory.
   expect(sessionName(cfg, "/repo/my-app")).toBe("my-app");
 });

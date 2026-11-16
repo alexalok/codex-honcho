@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { setMcpServer, clearMcpServer, hasMcpServer, HONCHO_MCP_URL } from "../../src/connectors/mcp.ts";
 
-const id = { apiKey: "hch-secret", userName: "testuser", workspaceId: "codex", assistantName: "codex" };
+const id = { apiKey: "test", userName: "testuser", workspaceId: "codex", assistantName: "codex" };
 
 test("setMcpServer writes a native HTTP honcho mcp block with creds and headers", () => {
   const out = setMcpServer("", id);
@@ -9,7 +9,7 @@ test("setMcpServer writes a native HTTP honcho mcp block with creds and headers"
   expect(out).toContain(`url = "${HONCHO_MCP_URL}"`);
   // Codex rejects a top-level bearer_token for streamable_http — the key rides
   // as an inline Authorization header inside http_headers instead.
-  expect(out).toContain('"Authorization" = "Bearer hch-secret"');
+  expect(out).toContain('"Authorization" = "Bearer test"');
   expect(out).not.toContain("bearer_token");
   expect(out).toContain('"X-Honcho-User-Name" = "testuser"');
   expect(out).toContain('"X-Honcho-Workspace-ID" = "codex"');
@@ -28,11 +28,11 @@ test("optional headers are omitted when absent", () => {
 test("setMcpServer is idempotent — one block after repeated writes", () => {
   let out = setMcpServer("", id);
   out = setMcpServer(out, id);
-  out = setMcpServer(out, { ...id, apiKey: "hch-rotated" });
+  out = setMcpServer(out, { ...id, apiKey: "updated" });
   expect(out.match(/\[mcp_servers\.honcho\]/g)).toHaveLength(1);
   // Latest creds win.
-  expect(out).toContain("hch-rotated");
-  expect(out).not.toContain("hch-secret");
+  expect(out).toContain("updated");
+  expect(out).not.toContain("Bearer test");
 });
 
 test("preserves the user's surrounding config", () => {
