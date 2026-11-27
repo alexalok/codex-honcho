@@ -11,6 +11,7 @@ const savedDir = process.env.HONCHO_CONFIG_DIR;
 const savedKey = process.env.HONCHO_API_KEY;
 let requests: { path: string; body: any }[];
 let facts: string[];
+let dates: (string | undefined)[];
 let fail = false;
 let server: ReturnType<typeof Bun.serve>;
 function writeConfig(extra: object = {}) {
@@ -23,6 +24,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "codex-honcho-prompt-"));
   process.env.HONCHO_CONFIG_DIR = dir;
   delete process.env.HONCHO_API_KEY;
+  dates = [];
   requests = []; facts = ["Auth refresh uses rotating tokens."]; fail = false;
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const path = new URL(req.url).pathname;
@@ -30,7 +32,7 @@ beforeEach(() => {
     requests.push({ path, body });
     if (fail) return Response.json({ message: "unavailable" }, { status: 503 });
     if (path.endsWith("/conclusions/query")) return Response.json(facts.map((content, i) => ({
-      id: String(i), content, observer_id: "testuser", observed_id: "testuser", session_id: "old", created_at: "2026-01-01T00:00:00Z"
+      id: String(i), content, observer_id: "testuser", observed_id: "testuser", session_id: "old", created_at: dates[i]
     })));
     return Response.json({ id: body?.id || "codex", metadata: {}, configuration: {} });
   }});
@@ -107,6 +109,17 @@ test("duplicates collapse, repeated blocks suppressed, different task queries fe
   expect(await prompt({ ...input, prompt: "Which DB stores project data?" })).toContain("DB uses SQLite.");
   expect(requests.filter(r => r.path.endsWith("/conclusions/query"))).toHaveLength(3);
 });
+test("unscoped recall dates the first ranked copy and keeps notes with unusable dates", async () => {
+  const created = new Date(2026, 10, 13, 0, 1);
+  facts = ["- Uses SQLite.", "uses  SQLite", "Invalid date", "Missing date"];
+  dates = [created.toISOString(), "2026-11-27T12:00:00Z", "invalid"];
+  const block = await prompt(input);
+  expect(block.split("\n").filter(line => line.startsWith("- "))).toEqual([
+    "- [2026-11-13] Uses SQLite.", "- Invalid date", "- Missing date",
+  ]);
+  expect(await prompt(input)).toBe("");
+});
+
 test("API failures return empty without fallback or poisoning later retry", async () => {
   writeContext("s1", "Generic preference", ["Profile secret"]);
   fail = true; expect(await prompt(input)).toBe("");

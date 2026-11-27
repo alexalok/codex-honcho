@@ -29,14 +29,16 @@ export async function getSession(config: Config, name: string) {
   return sessionAndPeers(config, name);
 }
 
+type TaskFact = string | { content: string; createdAt?: string };
+
 // Query only task-matching self-conclusions. Never request a peer card or a
 // generic representation, even when search returns no matches.
-export async function retrieveTaskMemory(config: Config, query: string, scope?: string): Promise<string[]> {
+export async function retrieveTaskMemory(config: Config, query: string, scope?: string): Promise<TaskFact[]> {
   if (scope) return (await recallContext(config, scope, query)).representation?.split("\n") ?? [];
   const honcho = new Honcho({ ...honchoClientOptions(config), timeout: 4000, maxRetries: 0 });
   const peer = await honcho.peer(config.peerName);
   const results = await peer.conclusions.query(query, MAX_TASK_RECALL_NOTES, 0.5);
-  return results.map((result) => result.content);
+  return results;
 }
 
 export const MAX_MEMORY_CHARS = 2400;
@@ -47,20 +49,25 @@ export function normalizeFact(value: string): string {
 
 // Treat memory as quoted historical data, not fresh instructions. Deduplicate
 // normalized facts before applying a strict budget including the wrapper.
-export function renderTaskMemory(facts: string[]): string {
+export function renderTaskMemory(facts: TaskFact[]): string {
   const open = '<honcho-memory>\nTask-matching historical notes; current instructions take precedence.\n';
   const close = '\n</honcho-memory>';
   const lines: string[] = [];
   const seen = new Set<string>();
   let length = open.length + close.length;
   for (const value of facts) {
-    if (typeof value !== "string") continue;
-    const fact = normalizeFact(value);
+    const content = typeof value === "string" ? value : value?.content;
+    if (typeof content !== "string") continue;
+    const fact = normalizeFact(content);
     const key = fact.toLowerCase().replace(/[.!?]+$/, "");
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const escaped = fact.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const line = `- ${escaped}`;
+    const created = typeof value !== "string" && typeof value.createdAt === "string"
+      ? new Date(value.createdAt) : undefined;
+    const prefix = created && Number.isFinite(created.getTime())
+      ? `[${created.toLocaleDateString("sv-SE")}] ` : "";
+    const line = `- ${prefix}${escaped}`;
     if (length + line.length + 1 > MAX_MEMORY_CHARS) continue;
     lines.push(line);
     length += line.length + 1;
