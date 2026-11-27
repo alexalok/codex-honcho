@@ -11,6 +11,6 @@ test("scoped recall sends scope and excludes global card; reads never provision 
   const config = { apiKey: "test", workspace: "test", peerName: "alex", endpoint: { baseUrl: `http://127.0.0.1:${server.port}` } } as Config;
   try {
     expect(await recallContext(config, "project-scope", "task query")).toEqual({ representation: "Scoped fact", peerCard: null });
-    expect(requests).toEqual([{ method: "POST", path: "/v3/workspaces/test/peers/alex/representation", body: { scope: "project-scope", max_conclusions: 6, include_most_frequent: false, search_query: "task query", search_top_k: 6, search_max_distance: 0.5 } }]);
+    expect(requests).toEqual([{ method: "POST", path: "/v3/workspaces/test/peers/alex/representation", body: { scope: "project-scope", max_conclusions: 13, include_most_frequent: false, search_query: "task query", search_top_k: 13, search_max_distance: 0.5 } }]);
   } finally { server.stop(true); }
 });

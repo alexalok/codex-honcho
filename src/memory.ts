@@ -1,4 +1,4 @@
-import { recallContext } from "./recall-context.ts";
+import { MAX_TASK_RECALL_NOTES, recallContext } from "./recall-context.ts";
 import { Honcho } from "@honcho-ai/sdk";
 import { honchoClientOptions, type Config } from "./config.ts";
 
@@ -35,7 +35,7 @@ export async function retrieveTaskMemory(config: Config, query: string, scope?: 
   if (scope) return (await recallContext(config, scope, query)).representation?.split("\n") ?? [];
   const honcho = new Honcho({ ...honchoClientOptions(config), timeout: 4000, maxRetries: 0 });
   const peer = await honcho.peer(config.peerName);
-  const results = await peer.conclusions.query(query, 6, 0.5);
+  const results = await peer.conclusions.query(query, MAX_TASK_RECALL_NOTES, 0.5);
   return results.map((result) => result.content);
 }
 
@@ -64,7 +64,7 @@ export function renderTaskMemory(facts: string[]): string {
     if (length + line.length + 1 > MAX_MEMORY_CHARS) continue;
     lines.push(line);
     length += line.length + 1;
-    if (lines.length === 6) break;
+    if (lines.length === MAX_TASK_RECALL_NOTES) break;
   }
   return lines.length ? `${open}${lines.join("\n")}${close}` : "";
 }
