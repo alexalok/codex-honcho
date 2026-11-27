@@ -48,7 +48,7 @@ test("opted-in prompt retrieval sends task query, threshold and peer identity, n
   expect(out).toContain("Auth refresh uses rotating tokens.");
   expect(out).not.toContain('peer=');
   const search = requests.find(r => r.path.endsWith("/conclusions/query"));
-  expect(search?.body).toEqual({ query: input.prompt, top_k: 6, distance: 0.5,
+  expect(search?.body).toEqual({ query: input.prompt, top_k: 13, distance: 0.5,
     filters: { observer_id: "testuser", observed_id: "testuser" } });
   expect(requests.some(r => /context|representation/.test(r.path))).toBe(false);
 });
