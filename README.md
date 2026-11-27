@@ -250,8 +250,11 @@ Already-sent messages stay in their original sessions; new messages use the full
 The desktop adapter reuses the framed JSON-RPC transport from
 [jev-skill-router PR #4](https://github.com/alexalok/jev-skill-router/pull/4).
 It calls only `list_threads` and `list_projects`: recent/pinned entries first,
-then paginated active/archived history. Matching includes host identity. No private
-app DB, global state file, directory-name inference, or Git fallback is used.
+then paginated active/archived history. On a local list miss, it first reads the
+explicit membership in Desktop's `.codex-global-state.sqlite` under Codex home.
+An explicit projectless entry uses global recall. Missing, conflicting, or
+unsupported records fall through to history. Project IDs must match the live
+host's project catalog. No directory-name or Git inference is used.
 A lookup is bounded to eight seconds and 100 pages per history category.
 
 Scopes use `codex-project-<sha256([hostId,projectId])>`; creation metadata stores

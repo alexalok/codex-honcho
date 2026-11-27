@@ -1,11 +1,12 @@
 // Pipe transport adapted from alexalok/jev-skill-router PR #4.
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { homedir } from 'node:os';
 const fail = (code: string) => new Error(code);
 
 // Same app-facing pipe protocol as bundled codex-app-tools/server.mjs.
-// Keep this adapter read-only; no private app database/config fallback.
+// Keep the app-facing transport read-only.
 export async function appRequest(method: string, params: Record<string, unknown>, { pipe = process.env.CODEX_APP_TOOLS_PIPE_PATH, timeoutMs = 3000 } = {}) {
   if (!pipe || !isAbsolute(pipe)) throw fail('HONCHO_PROJECT_LOOKUP_UNAVAILABLE');
   return new Promise<any>((resolve, reject) => {
@@ -45,6 +46,37 @@ export type ProjectResult =
   | { status: "projectless" }
   | { status: "unknown"; reason: string };
 
+// Desktop may persist membership before the new chat appears in thread history.
+async function localMembership(threadId: string, hostId: string): Promise<string | null | undefined> {
+  if (hostId !== "local") return undefined;
+  const home = process.env.CODEX_HOME || join(homedir(), ".codex");
+  try {
+    // Optional on older Node versions. Never create or migrate Desktop's database.
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(join(home, ".codex-global-state.sqlite"), { readOnly: true });
+    try {
+      const rows = db.prepare(`SELECT key, value FROM settings WHERE scope = 'global'
+        AND key IN ('thread-project-assignments', 'projectless-thread-ids', 'thread-project-membership-host-ids')`).all();
+      const settings = Object.fromEntries(rows.map(row => [String(row.key), JSON.parse(String(row.value))]));
+      const assignments = settings["thread-project-assignments"];
+      const projectless = settings["projectless-thread-ids"];
+      const hosts = settings["thread-project-membership-host-ids"];
+      if (!assignments || typeof assignments !== "object" || Array.isArray(assignments) ||
+          !Array.isArray(projectless) || !hosts || typeof hosts !== "object" || Array.isArray(hosts)) return undefined;
+      if (Object.hasOwn(hosts, threadId) && hosts[threadId] !== hostId) return undefined;
+      if (projectless.includes(threadId)) return Object.hasOwn(assignments, threadId) ? undefined : null;
+      const assignment = assignments[threadId];
+      if (assignment?.projectKind === "local" && typeof assignment.projectId === "string" && assignment.projectId) {
+        return assignment.projectId;
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Older runtimes, missing stores and incompatible schemas use desktop history.
+  }
+}
+
 // Each lookup has a total budget, including all history pages. Never guess from cwd.
 export async function resolveChatProject(
   threadId?: string,
@@ -80,6 +112,10 @@ export async function resolveChatProject(
     };
     const recent = await call("list_threads", { limit: 50 });
     let thread = match([...(recent.threads || []), ...(recent.pinnedThreads || [])]);
+    if (!thread) {
+      const projectId = await localMembership(threadId, hostId);
+      if (projectId !== undefined) thread = { projectId };
+    }
     for (const archived of [false, true]) {
       if (thread) break;
       let cursor: string | undefined;
